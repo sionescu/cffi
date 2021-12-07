@@ -71,6 +71,7 @@
 
 (defmethod component-depends-on ((op load-source-op) (c process-op-input))
   `((process-op ,c) ,@(call-next-method)))
+
 
 ;;;# ASDF component: GROVEL-FILE
 
@@ -96,7 +97,7 @@
          (input-file (first (input-files op c)))
          (tmp-file (process-grovel-file input-file output-file)))
     (rename-file-overwriting-target tmp-file output-file)))
-
+
 
 ;;;# ASDF component: WRAPPER-FILE
 
@@ -145,8 +146,49 @@
       (unwind-protect
            (alexandria:copy-file tmp-file output-file :if-to-exists :supersede)
         (delete-file tmp-file))))
+
+
+;;;# ASDF component: C-LIBRARY
+
+(defclass c-library (process-op-input cc-flags-mixin)
+  ((pkg :initform :cl+ssl
+        :initarg :pkg
+        :accessor pkg-of)
+   (method :initform :pkg-config
+           :initarg :method
+           :accessor method-of))
+  (:default-initargs
+   :generated-lisp-file-type "c-library-wrapper.lisp")
+  (:documentation
+   "ASDF component that loads a C library by resolving its compile
+name to the effective path of the linked shared object, and loading
+that instead, effectively acting as rpath in the C world.
+
+This way one does not have to hard-code all possible effective paths
+any more."))
+
+(defmethod output-files ((op process-op) (c c-library))
+  (let* ((input-file (first (input-files op c)))
+         (output-file (make-pathname :type (generated-lisp-file-type c)
+                                     :defaults input-file))
+         (c-file (make-c-file-name output-file "_c-library")))
+    (list output-file
+          c-file
+          (make-exe-file-name c-file))))
+
+(defmethod perform ((op process-op) (c c-library))
+  (destructuring-bind (output-file c-file exe-file)
+      (output-files op c)
+    (let ((tmp-file
+            (process-c-library-resolution
+             (pathname-name output-file)
+             (tmp-lisp-file-name output-file)
+             c-file
+             exe-file
+             (pkg-of c))))
+      (rename-file-overwriting-target tmp-file output-file))))
 
 ;; Allow for naked :cffi-grovel-file and :cffi-wrapper-file in asdf definitions.
 (setf (find-class 'asdf::cffi-grovel-file) (find-class 'grovel-file))
 (setf (find-class 'asdf::cffi-wrapper-file) (find-class 'wrapper-file))
-
+(setf (find-class 'asdf::cffi-c-library) (find-class 'c-library))
